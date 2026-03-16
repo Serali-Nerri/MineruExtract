@@ -1,0 +1,13 @@
+project_doc_fallback_filenames = [".codex/AGENTS.md"]
+
+[agents.default]
+description = "Default child agent with project docs disabled."
+config_file = "agents/default.toml"
+
+[agents.worker]
+description = "Execution-focused child agent with project docs disabled."
+config_file = "agents/worker.toml"
+
+[agents.explorer]
+description = "Read-only explorer child agent with project docs disabled."
+config_file = "agents/explorer.toml"
