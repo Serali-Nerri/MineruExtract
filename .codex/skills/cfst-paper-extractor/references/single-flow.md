@@ -227,6 +227,18 @@ When a value is derived, the field-level evidence must record:
 - raw unit if any
 - source location
 
+### 10.1 Reducing Redundancy in `value_origin`
+
+When many specimens share identical evidence (e.g., all specimens use the same concrete strength from a single material section), you may simplify the JSON using one of these approaches:
+
+1. **Omit fully redundant entries**: If **all specimens** share identical `value_origin` for a field (e.g., `fc_value`, `e1`, `e2`), document the shared evidence once in `paper_level.notes` and omit those fields from individual specimen `value_origin` objects.
+
+2. **Use minimal row-specific entries**: For fields extracted from a specimen table where only the row identifier changes (e.g., `fy`, `b`, `h`, `t`, `L`, `n_exp`), you may shorten the `source` to just the table name instead of repeating "Page X Table Y row SC-Z" for every specimen. The row identifier is already implicit in `specimen_label`.
+
+3. **Add `paper_level.shared_evidence`**: Store evidence that applies to all specimens in an optional `paper_level.shared_evidence` object, then omit those fields from individual specimen `value_origin` objects.
+
+**Default**: If unsure whether evidence is truly shared or if simplification might lose traceability, **keep the full `value_origin` for every specimen**. Redundancy is acceptable; loss of provenance is not.
+
 For `fc_basis` decisions:
 
 - cite the exact `Materials` / `Specimens` / `Concrete properties` paragraph, table header, or table footnote when available

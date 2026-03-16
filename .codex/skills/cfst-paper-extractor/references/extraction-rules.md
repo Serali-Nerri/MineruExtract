@@ -521,6 +521,47 @@ If page localization still cannot be determined, set `evidence.page = null` and 
 
 When a stored value is converted to canonical units or normalized from another basis, preserve the original text/unit in `value_origin` and mark the step with `kind = normalized` or `quality_flags += ["unit_converted"]` as appropriate.
 
+### 7.1 Reducing Redundancy in `value_origin`
+
+When multiple specimens share identical evidence for a field (e.g., all specimens use the same concrete strength from a single material properties section), you may use a **reference shorthand** to reduce JSON size:
+
+**Option 1: Omit fully redundant entries**
+- For fields where **all specimens** share identical `value_origin` (same `raw_text`, `raw_unit`, `formula`, `source`), you may omit the `value_origin` entry from individual specimens and document the shared evidence once in `paper_level.notes`.
+- Example: If all 12 specimens use `fc_value` from "Page 4 Section 2.3: C30 concrete, measured fck=30.5 MPa", include this in `paper_level.notes` and omit `fc_value` from each specimen's `value_origin`.
+- **Critical**: Only omit when the evidence is **truly identical** across all specimens. If even one specimen differs, include full `value_origin` for all.
+
+**Option 2: Minimal row-specific entries**
+- For fields extracted from a specimen table where only the row identifier changes (e.g., `fy`, `b`, `h`, `t`, `L`, `n_exp` from "Table 1 row SC-1" → "Table 1 row SC-2" → ...), you may use a shortened form:
+  ```json
+  "fy": {
+    "kind": "direct",
+    "raw_text": "342",
+    "raw_unit": "MPa",
+    "source": "Table 1"
+  }
+  ```
+  Instead of the full form with `"source": "Page 3 Table 1 row SC-1"`. The row identifier is already implicit in `specimen_label`.
+
+**Option 3: Shared evidence in `paper_level`**
+- Add an optional `paper_level.shared_evidence` object to store evidence that applies to all specimens:
+  ```json
+  "paper_level": {
+    "shared_evidence": {
+      "fc_value": {
+        "kind": "direct",
+        "raw_text": "核心混凝土强度等级按C30进行配制，最后测得fck=30.5 MPa",
+        "raw_unit": "MPa",
+        "source": "Page 4 Section 2.3"
+      },
+      "e1": {"kind": "derived", "raw_text": "12根钢管混凝土轴压短柱", "raw_unit": "mm", "formula": "0", "source": "Page 1 abstract"},
+      "e2": {"kind": "derived", "raw_text": "12根钢管混凝土轴压短柱", "raw_unit": "mm", "formula": "0", "source": "Page 1 abstract"}
+    }
+  }
+  ```
+  Then omit these fields from individual specimen `value_origin` objects.
+
+**Default behavior**: If you are unsure whether evidence is truly shared or if simplification might lose traceability, **keep the full `value_origin` for every specimen**. Redundancy is acceptable; loss of provenance is not.
+
 Example:
 
 ```json
