@@ -6,16 +6,16 @@ Section map:
 
 - `## 1-3`: enforce worker scope, required inputs, and execution order.
 - `## 4-5`: apply validity and ordinary-CFST gates.
-- `## 6-10`: resolve setup figures, reconcile mandatory table images with markdown tables, resolve concrete-strength basis, and preserve numeric and evidence traces.
+- `## 6-10`: resolve setup figures, read PDF pages directly, resolve concrete-strength basis, and preserve numeric and evidence traces.
 - `## 11-12`: enforce validation expectations and final output goals.
 
 ## 1. Worker Contract
 
-- process exactly one paper folder
+- process exactly one paper PDF
 - treat the parent-supplied worker brief plus this file and `references/extraction-rules.md` as the complete worker contract
-- inspect the owned paper folder directly in the worktree for reading; run sandbox-only helpers only through the parent-provided `worker_sandbox.py` command
+- read the owned paper exclusively through the `pdf_pages` MCP tool; run sandbox-only helpers only through the parent-provided `worker_sandbox.py` command
 - `scripts/safe_calc.py` and `scripts/validate_single_output.py` require `CFST_SANDBOX=1`; do not call them directly from the parent shell
-- read only the owned paper folder and the two worker references by default
+- read only the owned paper PDF and the two worker references by default
 - do not read `SKILL.md`, `runs/`, prior outputs, or `scripts/` to infer schema, validation, or path rules
 - when the parent provides both `temp_json_host_path` and `temp_json_workspace_path`, write the JSON on disk to `temp_json_host_path`; the workspace path is the sandbox-visible alias of that same file
 - never create or rely on a worktree-local relative `runs/...` JSON path
@@ -27,42 +27,38 @@ Section map:
 
 ## 2. Required Input Layout
 
-The worker input folder must contain:
+The worker receives:
 
-- exactly one top-level `.md` file
-- exactly one top-level parser `.json` file (exclude preprocessing metadata such as `paper_manifest.json` when counting)
-- `images/`
-- `tables/`
-- `tables/manifest.json`
+- `paper_pdf_path`: absolute path to the PDF file on the host filesystem — use this path when calling `pdf_info` and `pdf_pages` MCP tools
+- `paper_pdf_relpath`: relative path to the PDF file under the worktree root — use this path in sandbox commands (`--paper-dir-relpath`)
 
-Long paper filenames are allowed and do not need to be renamed. Resolve the markdown and parser JSON filenames by listing the paper folder contents instead of synthesizing `<paper_token>` names.
-The parser `.json` is not optional bookkeeping. Read it for page indices, block/page localization, and page fallback when markdown alone does not expose page numbers clearly. Do not use it as a third numeric/unit truth source for specimen extraction.
+The PDF is read exclusively through the `pdf_pages` MCP tool. No markdown, parser JSON, `images/`, or `tables/` directories are required.
 
-If any required path is missing, or if the top level contains zero or multiple `.md` / `.json` candidates, fail fast and report the missing or ambiguous path.
+Long paper filenames are allowed and do not need to be renamed.
+
+If the PDF file does not exist at the given path or cannot be read by the MCP tool, fail fast and report the missing or unreadable file.
 
 ## 3. Mandatory Execution Order
 
 1. Read `references/extraction-rules.md` and this file.
-2. Verify required input files exist and identify the actual markdown/json filenames in the paper directory.
-3. Read markdown first for global context.
-4. Read the top-level parser `.json` only for page indices, page/block localization, and fallback page recovery when markdown omits page markers.
-5. Read `tables/manifest.json` when available to map table captions or block ids to cropped table images.
-6. Locate the relevant `tables/` images for every specimen-bearing table referenced by the markdown and inspect them with `view_image`. When the markdown contains injected `![caption](tables/filename)` image references before `<table>` tags, use those references directly to locate the corresponding table images. Fall back to `tables/manifest.json` caption matching when the markdown does not contain injected references.
-7. Reconcile the markdown text tables against those same `tables/` images before extracting any specimen row values.
-8. Resolve concrete-strength basis evidence from `Materials`, `Specimens`, `Concrete properties`, notation sections, and table footnotes before assigning `fc_basis`. First search for nearby concrete-strength-grade signals such as `C30`, `C40`, `C50`, `C60`, or `C60/75`, then interpret symbols such as `fck`, `fc`, `f'c`, or `Fc`.
-9. Run the validity gate.
-10. Run the ordinary-CFST Tier 1 paper-level preconditions.
-11. Resolve the setup figure from markdown-linked image evidence.
-12. Extract specimen rows using reconciled markdown-plus-image table evidence.
-13. When a paper reports grouped average measured capacity for an explicit repeated-specimen group, assign that same average `n_exp` to each defensibly identified member row and mark `group_average_n_exp`.
-14. Normalize units and derived values with `scripts/safe_calc.py`.
-15. Run the ordinary-CFST Tier 2 per-specimen evaluation and tag each specimen with `is_ordinary` and `ordinary_exclusion_reasons`.
-16. Derive paper-level `is_ordinary_cfst` and `ordinary_filter` summary from specimen flags.
-17. Build schema v2.1 JSON.
-18. Write that JSON on disk to `temp_json_host_path` from the worker brief. Do not create a worktree-local relative `runs/...` JSON path.
-19. Validate that same file through `temp_json_workspace_path` with the parent-provided `worker_sandbox.py` command.
-20. If validation fails for schema, data, or evidence reasons, repair once, overwrite the same host-backed JSON path, and validate once more.
-21. If validation fails for path, mount, sandbox startup, or ownership reasons, stop and report the failure; do not relocate the JSON and do not create a second copy elsewhere.
+2. Verify the paper PDF exists at the given path.
+3. Call `pdf_info` on the paper PDF to get the total page count.
+4. Call `pdf_pages` to scan the paper pages. Read all pages or a targeted range as needed to identify the paper structure, specimen tables, setup figures, and material properties.
+5. Identify specimen-bearing tables and setup/loading figures from the PDF page images.
+6. Resolve concrete-strength basis evidence from `Materials`, `Specimens`, `Concrete properties`, notation sections, and table footnotes before assigning `fc_basis`. First search for nearby concrete-strength-grade signals such as `C30`, `C40`, `C50`, `C60`, or `C60/75`, then interpret symbols such as `fck`, `fc`, `f'c`, or `Fc`.
+7. Run the validity gate.
+8. Run the ordinary-CFST Tier 1 paper-level preconditions.
+9. Resolve the setup figure from PDF page image evidence.
+10. Extract specimen rows directly from PDF page images.
+11. When a paper reports grouped average measured capacity for an explicit repeated-specimen group, assign that same average `n_exp` to each defensibly identified member row and mark `group_average_n_exp`.
+12. Normalize units and derived values with `scripts/safe_calc.py`.
+13. Run the ordinary-CFST Tier 2 per-specimen evaluation and tag each specimen with `is_ordinary` and `ordinary_exclusion_reasons`.
+14. Derive paper-level `is_ordinary_cfst` and `ordinary_filter` summary from specimen flags.
+15. Build schema v2.1 JSON.
+16. Write that JSON on disk to `temp_json_host_path` from the worker brief. Do not create a worktree-local relative `runs/...` JSON path.
+17. Validate that same file through `temp_json_workspace_path` with the parent-provided `worker_sandbox.py` command.
+18. If validation fails for schema, data, or evidence reasons, repair once, overwrite the same host-backed JSON path, and validate once more.
+19. If validation fails for path, mount, sandbox startup, or ownership reasons, stop and report the failure; do not relocate the JSON and do not create a second copy elsewhere.
 
 ## 4. Validity Gate
 
@@ -84,9 +80,9 @@ For invalid papers:
 
 ## 5. Ordinary-CFST Gate (Two-Tier, Specimen-Level)
 
-Even when `is_valid=true`, evaluate each specimen individually for ordinary-CFST inclusion using the two-tier model defined in `references/extraction-rules.md` §2.
+Even when `is_valid=true`, evaluate each specimen individually for ordinary-CFST inclusion using the two-tier model defined in `references/extraction-rules.md` section 2.
 
-### Tier 1 — Paper-Level Preconditions
+### Tier 1 -- Paper-Level Preconditions
 
 Check once for the whole paper. If any fails, set all specimens to `is_ordinary=false` with the paper-level reason in each specimen's `ordinary_exclusion_reasons`.
 
@@ -94,7 +90,7 @@ Check once for the whole paper. If any fails, set all specimens to `is_ordinary=
 - `loading_regime = static`
 - no paper-wide durability conditioning (fire, corrosion, freeze-thaw)
 
-### Tier 2 — Per-Specimen Evaluation
+### Tier 2 -- Per-Specimen Evaluation
 
 When Tier 1 passes, check each specimen individually:
 
@@ -124,40 +120,26 @@ After all specimens are tagged, derive paper-level fields:
 
 ## 6. Setup Figure Resolution
 
-- prefer markdown mentions like `Fig.`, `Figure`, `加载装置`, `试验装置`
-- locate the exact markdown image reference
-- open that referenced image under `images/`
+- identify the setup/loading figure from PDF page images
+- look for pages containing loading apparatus diagrams, test setup schematics, or captions such as `Fig.`, `Figure`, `loading device`, `test setup`
 - determine loading mode from visual evidence when possible
 - do not decide loading mode from text alone when setup image evidence exists
+- note the PDF page number where the setup figure appears
 
 Store the resolved setup trace in:
 
 - `paper_level.loading_mode`
-- `paper_level.setup_figure`
+- `paper_level.setup_figure` (with `image_path = null` and `page` set to the PDF page number)
 - specimen `loading_mode`
-- specimen `evidence.setup_image`
+- specimen `evidence.setup_image` (set to `null`; the page reference goes in `evidence.page` or `paper_level.setup_figure.page`)
 
-## 7. Mandatory Table Reconciliation Rules
+## 7. Direct PDF Reading
 
-Relevant `tables/` images are mandatory evidence for every specimen-bearing table used in extraction. Do not extract specimen rows from markdown tables alone, even when the markdown text looks clean.
+The worker reads the paper exclusively through the `pdf_pages` MCP tool. Each PDF page is rendered as a high-resolution image. The page image is the single source of truth for all specimen values including row boundaries, merged cells, units, symbols, and signs.
 
-For each specimen-bearing table:
+Do not extract specimen values from any text layer or OCR output. Read values directly from the rendered PDF page images.
 
-- when the markdown includes an injected `![caption](tables/filename)` reference immediately before a `<table>` tag, that reference identifies the corresponding table image; open that image with `view_image` for reconciliation
-- when no injected reference is present, read the markdown table and inspect the corresponding `tables/` image with `view_image`, using `tables/manifest.json` as a helper index when it improves table-image matching
-- use markdown as a locator for table id, candidate row labels, and nearby notes
-- use the `tables/` image as the authority for row boundaries, merged cells, scalar assignment, units, symbols, and signs
-- confirm row/header alignment across both sources before writing any specimen field
-- do not run local OCR or introduce any third recognition pipeline on the paper images
-- use the top-level parser `.json` only for localization fallback such as recovering page numbers or block/page anchors
-
-If markdown and image disagree:
-
-- prefer the `tables/` image for numeric values, units, signs, and merged-cell interpretation
-- use markdown and nearby prose only to help map row labels, table ids, and footnotes
-- preserve a `quality_flags` marker such as `markdown_table_mismatch`
-
-If a needed specimen-bearing table has no corresponding readable `tables/` image, stop with a clear failure reason instead of extracting from markdown alone.
+There is no separate markdown or table image layer to reconcile. The PDF page image is the authoritative evidence for every specimen-bearing table.
 
 ## 8. Concrete-Strength Basis Rules
 
@@ -179,7 +161,7 @@ If a needed specimen-bearing table has no corresponding readable `tables/` image
 - in United States ACI / ASTM C39 context, treat `f'c` as cylinder-based specified compressive strength
 - in Japanese `Fc` / JIS A 1108 / JIS A 1132 context, treat `Fc` as cylinder-based unless the paper explicitly defines another basis
 - treat a bare single-value `C60` outside explicit Chinese cube context as ambiguous; inspect the cited code and the material/property section before choosing `cube` or `cylinder`
-- the same symbol means different things across codes: China `fck` (axial/prism, e.g., C60 → 38.5 MPa) is NOT Eurocode `fck` (cylinder, e.g., C60/75 → 60 MPa); China `fc` (axial design value) is NOT US `f'c` (specified cylinder strength); Japan `Fc` (JIS cylinder-based design standard strength) is NOT interchangeable with Chinese `fc` or US `f'c`; always check which code governs the specimen before interpreting these symbols
+- the same symbol means different things across codes: China `fck` (axial/prism, e.g., C60 -> 38.5 MPa) is NOT Eurocode `fck` (cylinder, e.g., C60/75 -> 60 MPa); China `fc` (axial design value) is NOT US `f'c` (specified cylinder strength); Japan `Fc` (JIS cylinder-based design standard strength) is NOT interchangeable with Chinese `fc` or US `f'c`; always check which code governs the specimen before interpreting these symbols
 - when both cube and cylinder values are reported, prefer the value the authors explicitly use in the specimen-property table, material parameters, constitutive model, or design/check calculations
 - if a nearby `Cxx` grade signal and a nearby `fck` / `fc` symbol point to different bases, and no explicit cube / cylinder / prism test description resolves the conflict, use the Chinese GB/T cube-grade plus measured-value exception above when it applies; otherwise set `fc_basis = unknown`
 - if the paper still does not identify the basis defensibly, set `fc_basis = unknown` and keep `fcy150 = null`
@@ -204,7 +186,7 @@ Use the parent-provided sandbox wrapper when calling `safe_calc.py`. Command pat
 ```bash
 python .codex/skills/cfst-paper-extractor/scripts/worker_sandbox.py \
   --worktree-path <worktree_path> \
-  --paper-dir-relpath <paper_dir_relpath> \
+  --paper-dir-relpath <paper_pdf_relpath> \
   --output-dir <output_dir> \
   --host-output-dir <output_host_path> \
   --cwd-mode workspace \
@@ -228,9 +210,13 @@ Every specimen row must preserve:
 - `evidence.setup_image`
 - `evidence.value_origin`
 
-When page localization is defensibly recoverable, include it in both `evidence.page` and `source_evidence` using explicit wording such as `Page 4`.
-Use the top-level parser `.json` as the normal fallback source for page recovery when markdown or image context does not surface page numbers clearly.
-If page localization still cannot be recovered from the processed artifacts, set `evidence.page = null` and keep the best available table/figure/text locator in `source_evidence` rather than inventing a page number.
+`evidence.page` is required and should always be populated since the worker knows which PDF page it read. Use explicit wording such as `Page 4` in both `evidence.page` and `source_evidence`.
+
+`evidence.table_image` may be `null` when the paper is read directly from PDF. The page reference in `evidence.page` serves as the locator for the specimen-bearing table.
+
+`evidence.setup_image` may be `null`. The page reference goes in `evidence.page` or `paper_level.setup_figure.page`.
+
+If page localization still cannot be determined, set `evidence.page = null` and keep the best available table/figure/text locator in `source_evidence` rather than inventing a page number.
 
 When a stored value is converted to canonical units, keep the original raw unit/value trace in `evidence.value_origin` and preserve `quality_flags` such as `unit_converted`.
 

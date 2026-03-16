@@ -11,3 +11,12 @@ config_file = "agents/worker.toml"
 [agents.explorer]
 description = "Read-only explorer child agent with project docs disabled."
 config_file = "agents/explorer.toml"
+
+[mcp_servers.pdfread]
+command = "python3"
+args = ["/home/thelya/tmp/per/.codex/tools/pdfread-mcp/pdfread_server.py"]
+cwd = "/home/thelya/tmp/per/tools/pdfread-mcp"
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+enabled_tools = ["pdf_info", "pdf_pages"]
+

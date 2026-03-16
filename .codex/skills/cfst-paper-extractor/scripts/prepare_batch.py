@@ -1,30 +1,29 @@
 #!/usr/bin/env python3
-"""Prepare a CFST batch workspace from processed paper folders."""
+"""Prepare a CFST batch workspace from processed PDF files."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
-
-from reorganize_parsed_with_tables import write_json  # noqa: E402
-
 PAPER_ID_PATTERN = re.compile(r"\[(A\d+-\d+)\]")
 
 
-def discover_processed_paper_dirs(processed_root: Path, include_regex: str | None) -> dict[str, Path]:
+def write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def discover_processed_pdfs(processed_root: Path, include_regex: str | None) -> dict[str, Path]:
     pattern = re.compile(include_regex) if include_regex else None
-    paper_dirs: dict[str, Path] = {}
+    paper_pdfs: dict[str, Path] = {}
     for item in sorted(processed_root.iterdir()):
-        if not item.is_dir():
+        if not item.is_file() or item.suffix.lower() != ".pdf":
             continue
         if pattern and not pattern.search(item.name):
             continue
@@ -32,8 +31,8 @@ def discover_processed_paper_dirs(processed_root: Path, include_regex: str | Non
         if not match:
             continue
         paper_id = match.group(1)
-        paper_dirs[paper_id] = item
-    return paper_dirs
+        paper_pdfs[paper_id] = item
+    return paper_pdfs
 
 
 def git_repo_status(cwd: Path) -> dict[str, Any]:
@@ -50,69 +49,62 @@ def git_repo_status(cwd: Path) -> dict[str, Any]:
     }
 
 
-def infer_paper_title_hint(processed_dir: Path) -> str:
-    text = processed_dir.name
+def infer_paper_title_hint(pdf_path: Path) -> str:
+    text = pdf_path.stem
     text = re.sub(r"^\[[^\]]+\]\s*", "", text)
     return text.strip()
 
 
-def build_folder_metadata(processed_dirs: dict[str, Path], paper_id: str) -> dict[str, Any]:
-    processed_dir = processed_dirs.get(paper_id)
+def build_pdf_metadata(processed_pdfs: dict[str, Path], paper_id: str) -> dict[str, Any]:
+    pdf_path = processed_pdfs.get(paper_id)
     return {
         "paper_id": paper_id,
         "citation_tag": f"[{paper_id}]",
-        "paper_title_hint": infer_paper_title_hint(processed_dir) if processed_dir else "",
+        "paper_title_hint": infer_paper_title_hint(pdf_path) if pdf_path else "",
         "expected_specimen_count": None,
     }
 
 
-def count_files(root: Path, *, skip_names: set[str] | None = None) -> int:
-    if not root.exists() or not root.is_dir():
-        return 0
-    skip_names = skip_names or set()
-    return sum(1 for path in root.rglob("*") if path.is_file() and path.name not in skip_names)
-
-
-def inspect_processed_layout(paper_dir: Path) -> dict[str, Any]:
-    markdown_files = sorted(path.name for path in paper_dir.iterdir() if path.is_file() and path.suffix.lower() == ".md")
-    parse_json_files = sorted(
-        path.name for path in paper_dir.iterdir()
-        if path.is_file() and path.suffix.lower() == ".json" and path.stem != "paper_manifest"
-    )
-    images_dir = paper_dir / "images"
-    tables_dir = paper_dir / "tables"
-    tables_manifest = tables_dir / "manifest.json"
-
+def inspect_pdf_layout(pdf_path: Path) -> dict[str, Any]:
     issues: list[str] = []
-    if len(markdown_files) != 1:
-        issues.append("expected_exactly_one_markdown_file")
-    if len(parse_json_files) != 1:
-        issues.append("expected_exactly_one_parse_json_file")
-    if not images_dir.is_dir():
-        issues.append("missing_images_dir")
-    if not tables_dir.is_dir():
-        issues.append("missing_tables_dir")
-    if not tables_manifest.is_file():
-        issues.append("missing_tables_manifest")
+    total_pages = 0
+
+    if not pdf_path.is_file():
+        issues.append("pdf_file_not_found")
+    else:
+        try:
+            proc = subprocess.run(
+                ["pdfinfo", str(pdf_path)],
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            if proc.returncode != 0:
+                issues.append("pdfinfo_failed")
+            else:
+                for line in proc.stdout.splitlines():
+                    if line.startswith("Pages:"):
+                        total_pages = int(line.split(":", 1)[1].strip())
+                        break
+                else:
+                    issues.append("pdfinfo_no_page_count")
+        except subprocess.TimeoutExpired:
+            issues.append("pdfinfo_timeout")
+        except FileNotFoundError:
+            issues.append("pdfinfo_not_available")
 
     return {
         "ready": not issues,
-        "markdown_file": markdown_files[0] if len(markdown_files) == 1 else None,
-        "parse_json_file": parse_json_files[0] if len(parse_json_files) == 1 else None,
-        "markdown_files": markdown_files,
-        "parse_json_files": parse_json_files,
-        "images_dir": str(images_dir) if images_dir.is_dir() else None,
-        "tables_dir": str(tables_dir) if tables_dir.is_dir() else None,
-        "tables_manifest": str(tables_manifest) if tables_manifest.is_file() else None,
-        "images_count": count_files(images_dir),
-        "table_image_count": count_files(tables_dir, skip_names={"manifest.json"}),
+        "pdf_file": pdf_path.name,
+        "total_pages": total_pages,
         "issues": issues,
     }
 
 
-def paper_dir_relpath(worktree_root: Path, paper_dir: Path) -> str | None:
+def paper_pdf_relpath(worktree_root: Path, pdf_path: Path) -> str | None:
     try:
-        return paper_dir.resolve().relative_to(worktree_root).as_posix()
+        return pdf_path.resolve().relative_to(worktree_root).as_posix()
     except ValueError:
         return None
 
@@ -120,7 +112,7 @@ def paper_dir_relpath(worktree_root: Path, paper_dir: Path) -> str | None:
 def build_worker_job(
     output_root: Path,
     paper_id: str,
-    paper_dir_relpath_value: str | None,
+    paper_pdf_relpath_value: str | None,
     expected_specimen_count: int | None,
     status: str,
 ) -> dict[str, Any]:
@@ -128,7 +120,7 @@ def build_worker_job(
     final_json = output_root / "output" / f"{paper_id}.json"
     return {
         "paper_id": paper_id,
-        "paper_dir_relpath": paper_dir_relpath_value,
+        "paper_pdf_relpath": paper_pdf_relpath_value,
         "worker_output_json_path": str(tmp_json),
         "final_output_json_path": str(final_json),
         "expected_specimen_count": expected_specimen_count,
@@ -136,30 +128,30 @@ def build_worker_job(
     }
 
 
-def selected_paper_ids(processed_dirs: dict[str, Path], explicit_ids: list[str] | None) -> list[str]:
-    ids = explicit_ids or sorted(processed_dirs.keys())
+def selected_paper_ids(processed_pdfs: dict[str, Path], explicit_ids: list[str] | None) -> list[str]:
+    ids = explicit_ids or sorted(processed_pdfs.keys())
     return sorted(set(ids), key=lambda value: tuple(int(x) for x in re.findall(r"\d+", value)) or (10**9,))
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Prepare CFST batch workspace from processed paper folders.")
+    parser = argparse.ArgumentParser(description="Prepare CFST batch workspace from processed PDF files.")
     parser.add_argument(
         "--processed-root",
         type=Path,
         required=True,
-        help="Root containing processed paper folders (markdown + parse json + images + tables).",
+        help="Root containing processed PDF files matching [Ax-yy]*.pdf.",
     )
     parser.add_argument(
         "--worktree-root",
         type=Path,
         default=Path("."),
-        help="Repository/worktree root used to compute worker paper_dir_relpath values.",
+        help="Repository/worktree root used to compute worker paper_pdf_relpath values.",
     )
     parser.add_argument("--output-root", type=Path, required=True, help="Batch output root.")
     parser.add_argument(
         "--include-regex",
         default=r"^\[A\d+-\d+\]",
-        help="Regex for processed paper folder discovery.",
+        help="Regex for processed PDF file discovery.",
     )
     parser.add_argument(
         "--paper-ids",
@@ -189,22 +181,22 @@ def main() -> int:
     tmp_dir = output_root / "tmp"
     final_output_dir = output_root / "output"
 
-    processed_dirs = discover_processed_paper_dirs(processed_root, args.include_regex)
-    selected_ids = selected_paper_ids(processed_dirs, args.paper_ids)
+    processed_pdfs = discover_processed_pdfs(processed_root, args.include_regex)
+    selected_ids = selected_paper_ids(processed_pdfs, args.paper_ids)
 
     batch_entries: list[dict[str, Any]] = []
     worker_jobs: list[dict[str, Any]] = []
     state_entries: list[dict[str, Any]] = []
 
     for paper_id in selected_ids:
-        folder_metadata = build_folder_metadata(processed_dirs, paper_id)
-        processed_dir = processed_dirs.get(paper_id)
-        layout = inspect_processed_layout(processed_dir) if processed_dir else None
-        dir_relpath = paper_dir_relpath(worktree_root, processed_dir) if processed_dir else None
+        pdf_metadata = build_pdf_metadata(processed_pdfs, paper_id)
+        pdf_path = processed_pdfs.get(paper_id)
+        layout = inspect_pdf_layout(pdf_path) if pdf_path else None
+        pdf_relpath = paper_pdf_relpath(worktree_root, pdf_path) if pdf_path else None
 
         status = "missing_processed_data"
-        if processed_dir and layout:
-            if dir_relpath is None:
+        if pdf_path and layout:
+            if pdf_relpath is None:
                 status = "outside_worktree"
             elif layout["ready"]:
                 status = "prepared"
@@ -213,11 +205,11 @@ def main() -> int:
 
         batch_entry = {
             "paper_id": paper_id,
-            "citation_tag": folder_metadata["citation_tag"],
-            "paper_title_hint": folder_metadata["paper_title_hint"],
-            "expected_specimen_count": folder_metadata["expected_specimen_count"],
-            "processed_dir": str(processed_dir) if processed_dir else None,
-            "paper_dir_relpath": dir_relpath,
+            "citation_tag": pdf_metadata["citation_tag"],
+            "paper_title_hint": pdf_metadata["paper_title_hint"],
+            "expected_specimen_count": pdf_metadata["expected_specimen_count"],
+            "processed_pdf": str(pdf_path) if pdf_path else None,
+            "paper_pdf_relpath": pdf_relpath,
             "status": status,
             "layout": layout,
         }
@@ -226,8 +218,8 @@ def main() -> int:
             build_worker_job(
                 output_root=output_root,
                 paper_id=paper_id,
-                paper_dir_relpath_value=dir_relpath if status == "prepared" else None,
-                expected_specimen_count=folder_metadata["expected_specimen_count"],
+                paper_pdf_relpath_value=pdf_relpath if status == "prepared" else None,
+                expected_specimen_count=pdf_metadata["expected_specimen_count"],
                 status=status,
             )
         )
@@ -245,7 +237,7 @@ def main() -> int:
     batch_manifest = {
         "schema_version": "cfst-batch-manifest-v3",
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source_layout": "processed-paper-dir",
+        "source_layout": "processed-pdf",
         "processed_root": str(processed_root),
         "worktree_root": str(worktree_root),
         "output_root": str(output_root),

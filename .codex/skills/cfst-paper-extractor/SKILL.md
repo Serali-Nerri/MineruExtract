@@ -1,26 +1,16 @@
 ---
 name: cfst-paper-extractor
-description: Extract specimen-level data from processed CFST paper folders into schema-v2 JSON, validate ordinary-CFST inclusion, provenance, and physical plausibility, orchestrate isolated one-paper workers, and publish canonical JSON outputs. Use when Codex needs to work from `processed/` paper directories that already contain markdown, parser JSON, `images/`, and `tables/`, repair or review CFST JSON outputs, or normalize raw MinerU parses into that processed layout before extraction.
+description: Extract specimen-level data from processed CFST paper PDFs into schema-v2 JSON, validate ordinary-CFST inclusion, provenance, and physical plausibility, orchestrate isolated one-paper workers, and publish canonical JSON outputs. Use when Codex needs to work from `processed/` PDF files, repair or review CFST JSON outputs.
 ---
 
 # CFST Paper Extractor
 
 Use only bundled files in this skill. Do not depend on external metadata manifests.
-Prefer existing `processed/` paper folders directly. If a paper folder already contains one top-level `.md`, one top-level parser `.json`, `images/`, `tables/`, and `tables/manifest.json`, skip preprocessing; the long paper filenames do not need to be normalized before extraction.
+The `processed/` directory contains PDF files matching `[Ax-yy]*.pdf`. Workers read these PDFs via the `pdf_pages` MCP tool.
 
 ## Use This Workflow
 
-0. If starting from a raw MinerU batch directory (not yet in processed layout), normalize it first:
-
-```bash
-python .codex/skills/cfst-paper-extractor/scripts/normalize_batch.py \
-  --batch-dir batch1 \
-  --output-dir processed
-```
-
-This creates `processed/[A1-1]/`, `processed/[A1-2]/`, etc. with one markdown (enhanced with table image references), one parser JSON, `images/`, `tables/`, and `tables/manifest.json`. Use `--no-inject-table-images` to skip injecting `![caption](tables/filename)` references into the markdown.
-
-1. Prepare a batch workspace from processed paper folders.
+1. Prepare a batch workspace from processed PDF files.
 
 ```bash
 python .codex/skills/cfst-paper-extractor/scripts/prepare_batch.py \
@@ -28,9 +18,7 @@ python .codex/skills/cfst-paper-extractor/scripts/prepare_batch.py \
   --output-root <output_root>
 ```
 
-This creates `manifests/`, `tmp/`, `output/`, and `logs/`. It does not copy or rename the paper folders under `processed/`.
-
-If you only have raw MinerU output and not the processed layout yet, run `scripts/reorganize_parsed_with_tables.py` first to create a compatible paper-folder structure. Do that only when `processed/` is missing or incomplete.
+This creates `manifests/`, `tmp/`, `output/`, and `logs/`. It discovers PDF files in `processed/` and writes manifests for worker orchestration.
 
 2. Follow the **Parent Playbook** below for worker orchestration (worktree creation, worker briefs, validation, retries), publication, and optional checkpoints.
 
@@ -40,8 +28,8 @@ Use this sequence as the canonical parent-agent orchestration path. If you follo
 
 ### Parent-Owned Artifacts
 
-- `<output_root>/manifests/batch_manifest.json`: batch summary, paper titles, and processed-layout inspection results.
-- `<output_root>/manifests/worker_jobs.json`: source of truth for `paper_id`, `paper_dir_relpath`, worker temp JSON path, and final output path.
+- `<output_root>/manifests/batch_manifest.json`: batch summary, paper titles, and PDF inspection results.
+- `<output_root>/manifests/worker_jobs.json`: source of truth for `paper_id`, `paper_pdf_relpath`, worker temp JSON path, and final output path.
 - `<output_root>/manifests/batch_state.json`: parent-owned per-paper state tracker.
 - `<output_root>/tmp/<paper_id>/<paper_id>.json`: sandbox-visible temp JSON path.
 - `worker_jobs.json[*].worker_output_json_path`: on-disk host-backed temp JSON path; workers must write here so the sandbox bind mount can see the same file at `<output_root>/tmp/<paper_id>/<paper_id>.json`.
@@ -65,14 +53,14 @@ python .codex/skills/cfst-paper-extractor/scripts/prepare_batch.py \
   --output-root <output_root>
 ```
 
-3. Read `<output_root>/manifests/worker_jobs.json`. Process only items whose `status` is `prepared`. Do not reconstruct paper paths from `paper_id`; use `paper_dir_relpath` from this file exactly as written.
+3. Read `<output_root>/manifests/worker_jobs.json`. Process only items whose `status` is `prepared`. Do not reconstruct paper paths from `paper_id`; use `paper_pdf_relpath` from this file exactly as written.
 Use `worker_output_json_path` from this file as the on-disk host write target for the worker's temp JSON.
 
 4. For each prepared job, create one isolated worker worktree:
 
 ```bash
 python .codex/skills/cfst-paper-extractor/scripts/git_worktree_isolation.py create \
-  --paper-dir '<paper_dir_relpath>' \
+  --paper-dir '<paper_pdf_relpath>' \
   --output-dir <output_root>/tmp/<paper_id>
 ```
 
@@ -88,7 +76,8 @@ This returns a JSON object. Record at least:
 
 - `paper_id=<paper_id>`
 - `worktree_path=<worktree_path>`
-- `paper_dir_relpath=<paper_dir_relpath>`
+- `paper_pdf_relpath=<paper_pdf_relpath>`
+- `paper_pdf_path=<absolute_host_path_to_pdf>`
 - `output_dir=<output_root>/tmp/<paper_id>`
 - `output_host_path=<output_host_path>`
 - `temp_json_workspace_path=<output_root>/tmp/<paper_id>/<paper_id>.json`
@@ -102,7 +91,8 @@ Own exactly one CFST paper.
 Inputs:
 - paper_id: <paper_id>
 - worktree_path: <worktree_path>
-- paper_dir_relpath: <paper_dir_relpath>
+- paper_pdf_relpath: <paper_pdf_relpath>        (relative path — used in sandbox commands: --paper-dir-relpath)
+- paper_pdf_path: <absolute_host_path_to_pdf>   (absolute path — used in pdf_info / pdf_pages MCP tool calls)
 - output_dir: <output_root>/tmp/<paper_id>
 - output_host_path: <output_host_path>
 - temp_json_workspace_path: <output_root>/tmp/<paper_id>/<paper_id>.json
@@ -113,7 +103,7 @@ Required reading inside the worktree:
 - .codex/skills/cfst-paper-extractor/references/single-flow.md
 
 Authoritative sources for this task, in order:
-- the owned paper folder at <paper_dir_relpath>
+- the owned paper PDF at <paper_pdf_path>
 - .codex/skills/cfst-paper-extractor/references/extraction-rules.md
 - .codex/skills/cfst-paper-extractor/references/single-flow.md
 - the exact commands and paths in this brief
@@ -130,15 +120,13 @@ Execution rules:
 - Write exactly one JSON file on disk, at `temp_json_host_path`.
 - Do not create or modify a worktree-local relative `runs/...` JSON path.
 - `temp_json_workspace_path` is the sandbox-visible path of that same file after `output_host_path` is bound into `output_dir`.
-- For every specimen-bearing table, locate the table image from the `![caption](tables/filename)` reference in the markdown (injected before each `<table>` tag), then reconcile the markdown text table against that image using `view_image`. If no injected reference is present, use `tables/manifest.json` to find the corresponding image.
-- Use the top-level parser `.json` only for page/block localization fallback. Do not use it as a third numeric or unit source.
-- Do not run local OCR or any other third recognition pipeline on the paper images.
-- When listing the paper directory to identify the parser `.json`, exclude `paper_manifest.json` if present — it is preprocessing metadata, not the parser output.
+- Read the paper using the `pdf_pages` MCP tool. Call `pdf_info` first to get the total page count, then call `pdf_pages` to read pages as needed.
+- Read values directly from the rendered PDF page images. Do not use any separate text layer or OCR output.
 - Run the validation command exactly as written below; do not rewrite paths or create a second output location.
 - After writing JSON, validate inside the sandbox with:
   python .codex/skills/cfst-paper-extractor/scripts/worker_sandbox.py \
     --worktree-path <worktree_path> \
-    --paper-dir-relpath <paper_dir_relpath> \
+    --paper-dir-relpath <paper_pdf_relpath> \
     --output-dir <output_root>/tmp/<paper_id> \
     --host-output-dir <output_host_path> \
     --cwd-mode workspace \
@@ -206,10 +194,10 @@ python .codex/skills/cfst-paper-extractor/scripts/checkpoint_output_commits.py \
 
 - Use a parent-child model for every multi-paper extraction.
 - Regardless of paper count, extraction work must always be executed by a spawned worker sub-agent; even a single-paper extraction must not be performed directly by the parent agent.
-- Spawn one worker sub-agent per prepared paper folder from `processed/`.
+- Spawn one worker sub-agent per prepared paper PDF from `processed/`.
 - Cap concurrency at 5 active paper workers.
-- Declare worker ownership at launch: one paper folder, one worker-local temp JSON path, and one worker worktree path.
-- Read `worker_jobs.json` after batch preparation and treat it as the only source of truth for `paper_dir_relpath`, temp JSON path, and per-paper readiness.
+- Declare worker ownership at launch: one paper PDF, one worker-local temp JSON path, and one worker worktree path.
+- Read `worker_jobs.json` after batch preparation and treat it as the only source of truth for `paper_pdf_relpath`, temp JSON path, and per-paper readiness.
 - Treat the repository as concurrently modified; workers must ignore unrelated changes and must not revert anything outside their ownership.
 - Keep the parent focused on orchestration, validation review, retries, and publication after workers launch.
 - If a worker is still running normally, do not interrupt it just because a local wait call timed out. Extraction may take longer than the nominal wait window.
@@ -217,16 +205,12 @@ python .codex/skills/cfst-paper-extractor/scripts/checkpoint_output_commits.py \
 
 ### Worker execution
 
-- Process exactly one prepared paper folder.
-- Worker-authoritative sources are the owned paper folder, `references/extraction-rules.md`, `references/single-flow.md`, and the parent-supplied worker brief.
+- Process exactly one prepared paper PDF.
+- Worker-authoritative sources are the owned paper PDF, `references/extraction-rules.md`, `references/single-flow.md`, and the parent-supplied worker brief.
 - Do not inspect `SKILL.md`, `scripts/`, `runs/`, prior outputs, or other papers to infer schema, validation, or path behavior. Only inspect a named helper script when a concrete runtime blocker remains unresolved after following the documented command.
 - When both `temp_json_workspace_path` and `temp_json_host_path` are provided, write the JSON on disk to `temp_json_host_path` and validate that same file through `temp_json_workspace_path` inside the sandbox bind mount.
-- Require these inputs: exactly one top-level `.md`, exactly one top-level parser `.json`, `images/`, `tables/`, and `tables/manifest.json`.
-- Resolve the actual markdown and parser JSON filenames by listing the paper directory contents; do not assume short `<paper_token>` filenames.
-- Read the markdown first for context, then read the top-level parser `.json` only for page/block localization and page fallback, then inspect the relevant `tables/` images and setup images with `view_image`.
-- Use `tables/manifest.json` as a fast index when matching captions or block ids to cropped table images, but treat the image itself as the authority.
-- Extract table data by reconciling the markdown text table against the corresponding `tables/` image opened with `view_image`; do not extract specimen rows from markdown tables alone.
-- Do not run local OCR or introduce any third recognition pipeline. The extraction truth sources are the markdown text plus the human-inspected table/setup images; the parser `.json` is localization support only.
+- Read the paper using the `pdf_pages` MCP tool. Call `pdf_info` to get the total page count, then call `pdf_pages` to read pages as needed.
+- Read values directly from the rendered PDF page images. The PDF page image is the single source of truth for all specimen values.
 - Resolve `fc_basis` by following `references/extraction-rules.md` `## 8. Concrete-Strength Basis Rules`. Before interpreting symbols such as `fck`, `fc`, `f'c`, or `Fc`, first search nearby material/property text, table headers, and footnotes for code-defined grade notation such as Chinese `C30`, `C40`, `C50`, `C60` or Eurocode `C60/75`. In Chinese GB/T context, those `Cxx` grades sit above nearby bare `fck` / `fc` symbols in the priority order; when the reported measured value clearly matches the cube-strength system, keep `fc_type` consistent with that stored value instead of mirroring sloppy symbol usage. Do not assign `fc_basis` without consulting those rules.
 - Keep `fc_type` in validator-compatible form only: `cube`, `cylinder`, `prism`, `unknown`, or sized forms such as `Cube 150` or `Cylinder 100x200`. Never store symbolic notation like `fck/fcu/f'c/fc` or explanatory phrases in `fc_type`.
 - Inside the worker sandbox, use `scripts/safe_calc.py` for conversions, rounding, and derived values; do not do ad hoc arithmetic.
@@ -239,7 +223,7 @@ python .codex/skills/cfst-paper-extractor/scripts/checkpoint_output_commits.py \
 - Produce the schema-v2.1 top-level keys `schema_version`, `paper_id`, `is_valid`, `is_ordinary_cfst`, `reason`, `ordinary_filter`, `ref_info`, `paper_level`, `Group_A`, `Group_B`, and `Group_C`.
 - Treat `is_valid=false` as an unusable paper with empty specimen groups.
 - Treat `is_valid=true` as usable; extract all specimens regardless of ordinary status.
-- Tag each specimen with `is_ordinary` and `ordinary_exclusion_reasons` using the two-tier evaluation in `references/extraction-rules.md` §2.
+- Tag each specimen with `is_ordinary` and `ordinary_exclusion_reasons` using the two-tier evaluation in `references/extraction-rules.md` section 2.
 - Derive `is_ordinary_cfst` from specimen flags: `true` when at least one specimen has `is_ordinary=true`.
 - Keep worker output in `tmp/<paper_id>/<paper_id>.json` only.
 - Let the parent publish the final JSON into `output/<paper_id>.json`; workers must never write final outputs directly.
@@ -258,7 +242,7 @@ python .codex/skills/cfst-paper-extractor/scripts/bootstrap_git_repo.py \
 
 - Create every worker environment with `scripts/git_worktree_isolation.py create`.
 - Launch every worker only through `scripts/worker_sandbox.py`.
-- The paper folder is mounted read-only inside the sandbox; only the declared worker-local temp output directory is writable. For parent-managed batches, bind that writable directory from the parent workspace with `--host-output-dir` so temp JSON survives worktree deletion.
+- The paper PDF is mounted read-only inside the sandbox; only the declared worker-local temp output directory is writable. For parent-managed batches, bind that writable directory from the parent workspace with `--host-output-dir` so temp JSON survives worktree deletion.
 - `scripts/safe_calc.py` and `scripts/validate_single_output.py` are sandbox-only helpers in this variant; they fail fast if `CFST_SANDBOX=1` is missing.
 - Require `bubblewrap` or `bwrap`.
 - Treat sandbox startup failure as fatal; do not fall back to unsandboxed execution.
@@ -266,9 +250,7 @@ python .codex/skills/cfst-paper-extractor/scripts/bootstrap_git_repo.py \
 
 ## Use These Bundled Scripts
 
-- `scripts/prepare_batch.py`: preferred entry point; discover processed paper folders, verify they have markdown/json/images/tables, and write manifests/state for worker orchestration without copying paper contents.
-- `scripts/normalize_batch.py`: preferred entry point for converting raw MinerU batch directories into the processed layout; wraps `reorganize_parsed_with_tables.py` with bracket-prefixed folder names and table image injection into markdown by default.
-- `scripts/reorganize_parsed_with_tables.py`: lower-level normalization helper; use `--inject-table-images` to insert table image references into the output markdown before each `<table>` tag. Called internally by `normalize_batch.py`.
+- `scripts/prepare_batch.py`: preferred entry point; discover processed PDF files, verify readability, and write manifests/state for worker orchestration.
 - `scripts/validate_single_output.py`: sandbox-only validator for one worker-local schema-v2 JSON; checks shape, provenance, plausibility, ordinary-filter consistency, and rounding.
 - `scripts/publish_validated_output.py`: revalidate worker outputs, publish final JSON, and append a publish log.
 - `scripts/git_worktree_isolation.py`: create and remove per-paper git worktrees. In the parent flow, `create` also returns `output_host_path`, the persistent host directory that should be bound into `worker_sandbox.py`.
@@ -279,5 +261,5 @@ python .codex/skills/cfst-paper-extractor/scripts/bootstrap_git_repo.py \
 
 ## Read These References
 
-- `references/extraction-rules.md`: use for schema details, group mapping, required fields, evidence format, loading-mode decisions, numeric rules, mandatory table-image reconciliation, and invalid-output handling.
-- `references/single-flow.md`: use for one-paper worker sequencing, required input layout, mandatory table-image reconciliation, setup-figure rules, and validation expectations.
+- `references/extraction-rules.md`: use for schema details, group mapping, required fields, evidence format, loading-mode decisions, numeric rules, and invalid-output handling.
+- `references/single-flow.md`: use for one-paper worker sequencing, required input layout, setup-figure rules, and validation expectations.

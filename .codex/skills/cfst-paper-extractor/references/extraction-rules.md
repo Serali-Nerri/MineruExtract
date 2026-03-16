@@ -180,7 +180,7 @@ Use the schema description below as the worker's example source of truth. Do not
         "page": 7,
         "table_id": "Table 1",
         "figure_id": null,
-        "table_image": "tables/example_table.png",
+        "table_image": null,
         "setup_image": null,
         "value_origin": {
           "fc_value": {
@@ -423,7 +423,7 @@ Invalid examples:
 - `loading_pattern`: the loading pattern for this specific specimen (`monotonic`, `cyclic`, `repeated`, or `unknown`); when the paper uses a single loading pattern for all specimens, every specimen receives the same value; when the paper mixes patterns, each specimen records its own
 - `is_ordinary`: boolean indicating whether this specimen qualifies for the ordinary CFST dataset; derived from the two-tier evaluation in §2
 - `ordinary_exclusion_reasons`: list of strings identifying why the specimen is non-ordinary; must be empty when `is_ordinary=true`; must be non-empty when `is_ordinary=false`
-- `quality_flags`: list of extraction-risk flags such as `markdown_table_mismatch`, `group_average_n_exp`, `derived_L`, `unit_converted`, `context_inferred_fc_basis`
+- `quality_flags`: list of extraction-risk flags such as `group_average_n_exp`, `derived_L`, `unit_converted`, `context_inferred_fc_basis`
 
 For recycled aggregate concrete, `r_ratio` must record the recycled aggregate replacement ratio `R%`.
 
@@ -504,11 +504,12 @@ Each specimen `evidence` object must contain:
 - `setup_image`
 - `value_origin`
 
-`evidence.page` is required as a key, but the value may be `null` when page localization cannot be defensibly recovered from the processed artifacts.
-When page localization is defensibly recoverable, `source_evidence` should also state it explicitly with wording such as `Page 4 Table 1`.
-Use the top-level parser `.json` as the normal fallback source for page recovery when markdown alone does not expose page numbers clearly. Do not use the parser `.json` as a third numeric or unit source when the markdown text and table image have already been read.
+`evidence.page` is required and should always be populated since the worker knows which PDF page it read. When page localization is defensibly recoverable, `source_evidence` should also state it explicitly with wording such as `Page 4 Table 1`.
+If page localization still cannot be determined, set `evidence.page = null` and keep the best available table/figure/text locator in `source_evidence` rather than inventing a page number.
 
-For specimen rows sourced from tables, `table_image` must point to the corresponding `tables/` image that was actually read during extraction. Do not leave table-image evidence empty when a row was extracted from a paper table.
+`evidence.table_image` may be `null` when the paper is read directly from PDF. The page reference in `evidence.page` serves as the locator for the specimen-bearing table.
+
+`evidence.setup_image` may be `null`. The page reference goes in `evidence.page` or `paper_level.setup_figure.page`.
 
 `value_origin` is a dictionary keyed by field name. Each populated field entry should contain:
 
@@ -588,32 +589,11 @@ If the paper does not name `L` directly but the specimen/setup figure makes the 
 
 Do not populate `L` when the geometry basis is ambiguous. Do not infer `L` from boundary-condition assumptions or effective-length formulas.
 
-## 11. Markdown/Table Image Reconciliation Gate
+## 11. Direct PDF Reading
 
-Reading the corresponding `tables/` image is mandatory for every specimen-bearing table used in extraction. The table image is not a fallback; it is part of the normal extraction evidence.
+The worker reads the paper through the `pdf_pages` MCP tool. Each PDF page is rendered as a high-resolution image. The page image is the single source of truth for all specimen values including row boundaries, merged cells, units, symbols, and signs.
 
-For each specimen-bearing table:
-
-- read the markdown text table and inspect the corresponding `tables/` image with `view_image`
-- use `tables/manifest.json` as a helper index when it improves caption-to-image matching
-- use markdown/context to locate table ids, row labels, and nearby notes
-- use the `tables/` image as the primary authority for row boundaries, merged cells, scalar assignment, units, symbols, and signs
-- confirm that the markdown row/header mapping is consistent with the image before storing values
-- do not run local OCR or introduce any third recognition pipeline on the paper images
-- use the top-level parser `.json` only for localization fallback such as page numbers or block/page anchors, not for numeric truth recovery
-
-Treat the markdown table text as insufficient on its own whenever you are writing specimen values. If markdown and image disagree, prefer the image and keep a `quality_flags` marker.
-
-Common disagreement signals include:
-
-- merged specimen labels
-- one cell contains multiple candidate scalar values
-- row/column alignment is unstable
-- unit header and data column semantics drift
-- a source/reference column contains load-like numbers
-- markdown split fragments make scalar assignment ambiguous
-
-If a required specimen-bearing table does not have a corresponding readable `tables/` image, stop with a clear processing failure instead of extracting from markdown alone.
+Do not extract specimen values from any text layer or OCR output. Read values directly from the rendered PDF page images.
 
 ## 12. Invalid And Failed Outputs
 

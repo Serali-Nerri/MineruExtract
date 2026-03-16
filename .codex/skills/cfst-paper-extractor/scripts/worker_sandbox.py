@@ -94,7 +94,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--paper-dir-relpath",
         required=True,
-        help="Paper folder path relative to worktree root.",
+        help="Paper path (file or directory) relative to worktree root.",
     )
     parser.add_argument(
         "--skill-dir-relpath",
@@ -162,8 +162,8 @@ def main() -> int:
     except ValueError as exc:
         return _fail(str(exc))
 
-    if not paper_abs.is_dir():
-        return _fail(f"Paper directory not found: {paper_abs}")
+    if not paper_abs.exists():
+        return _fail(f"Paper path not found: {paper_abs}")
     if not skill_abs.is_dir():
         return _fail(f"Skill directory not found: {skill_abs}")
 
