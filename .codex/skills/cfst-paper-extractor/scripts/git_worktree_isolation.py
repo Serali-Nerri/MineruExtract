@@ -303,7 +303,7 @@ def _build_parser() -> argparse.ArgumentParser:
     create.add_argument(
         "--output-dir",
         default="output",
-        help="Persistent worker-local output directory under repository root (recommended: runs/.../tmp/<paper_token>).",
+        help="Persistent worker-local output directory under repository root (default: output).",
     )
 
     remove = sub.add_parser("remove", help="Remove one isolated worktree.")

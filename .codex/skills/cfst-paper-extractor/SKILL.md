@@ -14,8 +14,7 @@ The `processed/` directory contains PDF files matching `[Ax-yy]*.pdf`. Workers r
 
 ```bash
 python .codex/skills/cfst-paper-extractor/scripts/prepare_batch.py \
-  --processed-root processed \
-  --output-root <output_root>
+  --processed-root processed
 ```
 
 This creates `manifests/`, `tmp/`, `output/`, and `logs/`. It discovers PDF files in `processed/` and writes manifests for worker orchestration.
@@ -28,12 +27,12 @@ Use this sequence as the canonical parent-agent orchestration path. If you follo
 
 ### Parent-Owned Artifacts
 
-- `<output_root>/manifests/batch_manifest.json`: batch summary, paper titles, and PDF inspection results.
-- `<output_root>/manifests/worker_jobs.json`: source of truth for `paper_id`, `paper_pdf_relpath`, worker temp JSON path, and final output path.
-- `<output_root>/manifests/batch_state.json`: parent-owned per-paper state tracker.
-- `<output_root>/tmp/<paper_id>/<paper_id>.json`: sandbox-visible temp JSON path.
-- `worker_jobs.json[*].worker_output_json_path`: on-disk host-backed temp JSON path; workers must write here so the sandbox bind mount can see the same file at `<output_root>/tmp/<paper_id>/<paper_id>.json`.
-- `<output_root>/output/<paper_id>.json`: canonical published artifact; parent writes here only through `publish_validated_output.py`.
+- `output/manifests/batch_manifest.json`: batch summary, paper titles, and PDF inspection results.
+- `output/manifests/worker_jobs.json`: source of truth for `paper_id`, `paper_pdf_relpath`, worker temp JSON path, and final output path.
+- `output/manifests/batch_state.json`: parent-owned per-paper state tracker.
+- `output/tmp/<paper_id>/<paper_id>.json`: sandbox-visible temp JSON path.
+- `worker_jobs.json[*].worker_output_json_path`: on-disk host-backed temp JSON path; workers must write here so the sandbox bind mount can see the same file at `output/tmp/<paper_id>/<paper_id>.json`.
+- `output/output/<paper_id>.json`: canonical published artifact; parent writes here only through `publish_validated_output.py`.
 
 ### Direct-Use Sequence
 
@@ -49,11 +48,10 @@ python .codex/skills/cfst-paper-extractor/scripts/bootstrap_git_repo.py \
 
 ```bash
 python .codex/skills/cfst-paper-extractor/scripts/prepare_batch.py \
-  --processed-root processed \
-  --output-root <output_root>
+  --processed-root processed
 ```
 
-3. Read `<output_root>/manifests/worker_jobs.json`. Process only items whose `status` is `prepared`. Do not reconstruct paper paths from `paper_id`; use `paper_pdf_relpath` from this file exactly as written.
+3. Read `output/manifests/worker_jobs.json`. Process only items whose `status` is `prepared`. Do not reconstruct paper paths from `paper_id`; use `paper_pdf_relpath` from this file exactly as written.
 Use `worker_output_json_path` from this file as the on-disk host write target for the worker's temp JSON.
 
 4. For each prepared job, create one isolated worker worktree:
@@ -61,7 +59,7 @@ Use `worker_output_json_path` from this file as the on-disk host write target fo
 ```bash
 python .codex/skills/cfst-paper-extractor/scripts/git_worktree_isolation.py create \
   --paper-dir '<paper_pdf_relpath>' \
-  --output-dir <output_root>/tmp/<paper_id>
+  --output-dir output/tmp/<paper_id>
 ```
 
 This returns a JSON object. Record at least:
@@ -78,9 +76,9 @@ This returns a JSON object. Record at least:
 - `worktree_path=<worktree_path>`
 - `paper_pdf_relpath=<paper_pdf_relpath>`
 - `paper_pdf_path=<absolute_host_path_to_pdf>`
-- `output_dir=<output_root>/tmp/<paper_id>`
+- `output_dir=output/tmp/<paper_id>`
 - `output_host_path=<output_host_path>`
-- `temp_json_workspace_path=<output_root>/tmp/<paper_id>/<paper_id>.json`
+- `temp_json_workspace_path=output/tmp/<paper_id>/<paper_id>.json`
 - `temp_json_host_path=<worker_output_json_path_from_worker_jobs.json>`
 
 6. Use this worker brief template verbatim except for placeholder substitution:
@@ -93,9 +91,9 @@ Inputs:
 - worktree_path: <worktree_path>
 - paper_pdf_relpath: <paper_pdf_relpath>        (relative path — used in sandbox commands: --paper-dir-relpath)
 - paper_pdf_path: <absolute_host_path_to_pdf>   (absolute path — used in pdf_info / pdf_pages MCP tool calls)
-- output_dir: <output_root>/tmp/<paper_id>
+- output_dir: output/tmp/<paper_id>
 - output_host_path: <output_host_path>
-- temp_json_workspace_path: <output_root>/tmp/<paper_id>/<paper_id>.json
+- temp_json_workspace_path: output/tmp/<paper_id>/<paper_id>.json
 - temp_json_host_path: <worker_output_json_path_from_worker_jobs.json>
 
 Required reading inside the worktree:
@@ -127,12 +125,12 @@ Execution rules:
   python .codex/skills/cfst-paper-extractor/scripts/worker_sandbox.py \
     --worktree-path <worktree_path> \
     --paper-dir-relpath <paper_pdf_relpath> \
-    --output-dir <output_root>/tmp/<paper_id> \
+    --output-dir output/tmp/<paper_id> \
     --host-output-dir <output_host_path> \
     --cwd-mode workspace \
     -- \
     python3 .codex/skills/cfst-paper-extractor/scripts/validate_single_output.py \
-      --json-path <output_root>/tmp/<paper_id>/<paper_id>.json \
+      --json-path output/tmp/<paper_id>/<paper_id>.json \
       --strict-rounding
 - If validation fails, repair once before returning.
 - If the validator or sandbox reports a path, mount, or sandbox startup failure, stop and return that failure to the parent; do not move the JSON to a different path and do not write a second copy elsewhere.
@@ -153,7 +151,7 @@ Return exactly:
 
 While a worker remains in normal `running` state and has not reported a concrete failure, interrupt, or terminal result, do not interrupt, replace, or redirect it. One-paper extraction can legitimately exceed a short wait timeout. Use generous waits and only intervene on terminal status or concrete blockers.
 
-8. After the worker exits, confirm the temp JSON exists at `worker_output_json_path` in the parent workspace. This same file must also be visible inside the sandbox at `<output_root>/tmp/<paper_id>/<paper_id>.json` because `--host-output-dir` binds the parent directory into `output_dir`.
+8. After the worker exits, confirm the temp JSON exists at `worker_output_json_path` in the parent workspace. This same file must also be visible inside the sandbox at `output/tmp/<paper_id>/<paper_id>.json` because `--host-output-dir` binds the parent directory into `output_dir`.
 
 9. Always clean up each finished worker worktree, whether the paper succeeded or failed:
 
@@ -167,10 +165,10 @@ python .codex/skills/cfst-paper-extractor/scripts/git_worktree_isolation.py remo
 
 ```bash
 python .codex/skills/cfst-paper-extractor/scripts/publish_validated_output.py \
-  --batch-manifest <output_root>/manifests/batch_manifest.json \
-  --tmp-root <output_root>/tmp \
-  --output-dir <output_root>/output \
-  --publish-log <output_root>/logs/publish_log.jsonl \
+  --batch-manifest output/manifests/batch_manifest.json \
+  --tmp-root output/tmp \
+  --output-dir output/output \
+  --publish-log output/logs/publish_log.jsonl \
   --strict-rounding
 ```
 
@@ -179,7 +177,7 @@ python .codex/skills/cfst-paper-extractor/scripts/publish_validated_output.py \
 ```bash
 python .codex/skills/cfst-paper-extractor/scripts/checkpoint_output_commits.py \
   --processed-count <published_plus_failed_count> \
-  --output-dir <output_root>/output
+  --output-dir output/output
 ```
 
 12. The parent agent's final report should distinguish:

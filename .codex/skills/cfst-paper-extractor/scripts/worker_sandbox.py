@@ -193,7 +193,11 @@ def main() -> int:
     scripts_dst = f"{skill_base_dst}/scripts"
 
     mkdir_targets = set()
-    mkdir_targets.update(_workspace_dirs_for(paper_rel))
+    # For file inputs, only create parent directories before the bind mount.
+    paper_workspace_rel = (
+        str(PurePosixPath(paper_rel).parent) if paper_abs.is_file() else paper_rel
+    )
+    mkdir_targets.update(_workspace_dirs_for(paper_workspace_rel))
     mkdir_targets.update(_workspace_dirs_for(output_rel))
     mkdir_targets.update(_workspace_dirs_for(skill_rel))
 

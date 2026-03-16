@@ -147,7 +147,12 @@ def main() -> int:
         default=Path("."),
         help="Repository/worktree root used to compute worker paper_pdf_relpath values.",
     )
-    parser.add_argument("--output-root", type=Path, required=True, help="Batch output root.")
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=Path("output"),
+        help="Batch output root (default: output/).",
+    )
     parser.add_argument(
         "--include-regex",
         default=r"^\[A\d+-\d+\]",
